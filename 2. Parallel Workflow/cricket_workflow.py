@@ -44,7 +44,7 @@ class Cricketer_State(TypedDict):
 graph=StateGraph(Cricketer_State)
 
 
-
+# Note for parallel workflow, each function should return only the part of the state it modifies.
 def calculate_strike_rate(state:Cricketer_State):
     print("Calculating strike rate...")
     total_runs=state['total_runs']
