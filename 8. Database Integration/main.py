@@ -1,78 +1,47 @@
-from langgraph.graph import StateGraph,START,END
-from typing import TypedDict, Annotated,Literal
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-from langchain_core.messages import HumanMessage, BaseMessage
-from pydantic import BaseModel, Field
-from langchain_core.prompts import PromptTemplate
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from dotenv import load_dotenv
 import os
 import sqlite3
+from langchain_huggingface import ChatHuggingFace,HuggingFaceEndpoint
 
 load_dotenv()
 
 llm = HuggingFaceEndpoint(
     # repo_id="zai-org/GLM-4.7-Flash",
-    repo_id="living-box/gemma-2-2b-it-alpaca-cleaned-SFT-PKU-SafeRLHF-OnlineIPO1-lora-0124140623-epoch-8",
-    # repo_id="moonshotai/Kimi-K2-Instruct-0905",
+    repo_id="deepseek-ai/DeepSeek-V3.2",
     task="text-generation",
     huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN"),
 )
 
-model_hf= ChatHuggingFace(llm=llm)
+llm= ChatHuggingFace(llm=llm)
+class ChatState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
 
-    
-# defining state
-class Chatbot_State(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages] = Field(..., description="List of messages exchanged in the chat")
-    
-    
-    
-# create connection
-conn=sqlite3.connect(r"E:\LangGraph\8. Database Integration\chatbot.db",check_same_thread=False)
+def chat_node(state: ChatState):
+    messages = state['messages']
+    response = llm.invoke(messages)
+    return {"messages": [response]}
 
+conn = sqlite3.connect(database=r'E:\LangGraph\8. Database Integration\chatbot.db', check_same_thread=False)
+# Checkpointer
+checkpointer = SqliteSaver(conn=conn)
 
-# for memory
-checkpointer=SqliteSaver(conn=conn)
+graph = StateGraph(ChatState)
+graph.add_node("chat_node", chat_node)
+graph.add_edge(START, "chat_node")
+graph.add_edge("chat_node", END)
 
-graph=StateGraph(Chatbot_State)
+chatbot = graph.compile(checkpointer=checkpointer)
 
+def retrieve_all_threads():
+    all_threads = set()
+    for checkpoint in checkpointer.list(None):
+        all_threads.add(checkpoint.config['configurable']['thread_id'])
 
-def chat(state:Chatbot_State)->Chatbot_State:
-    messages=state['messages']
-    response = model_hf.invoke(messages)
-    return {'messages': [response]}
+    return list(all_threads)
 
-
-# defining nodes
-graph.add_node('chat',chat,description="Chat with the user using LLM")
-
-# defining edges
-graph.add_edge(START,'chat')
-graph.add_edge('chat',END)
-
-
-if __name__=="__main__":
-    
-    chat_bot=graph.compile(checkpointer=checkpointer)
-    initial_state={'messages':[]}
-    thread_id="chat_thread_1"
-    while True:
-        user_input=input("User: ")
-        if user_input.lower() in ['exit','quit']:
-            break
-        
-        user_message=HumanMessage(content=user_input)
-        config={'configurable':{'thread_id':thread_id}}
-        # streaming response
-        streaming=chat_bot.stream(
-            {'messages':[HumanMessage(content=user_input )]},
-            config=config,
-            stream_mode='messages'
-        )
-        
-        for message_chunk,metadata in streaming:
-            print(message_chunk.content,end='',flush=True)
-            
-        print()  # for new line after completion
