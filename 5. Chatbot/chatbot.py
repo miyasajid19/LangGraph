@@ -53,16 +53,19 @@ graph.add_edge(START,'chat')
 graph.add_edge('chat',END)
 
 
-chat_bot=graph.compile(checkpointer=checkpointer)
-initial_state={'messages':[]}
-thread_id="chat_thread_1"
-while True:
-    user_input=input("User: ")
-    if user_input.lower() in ['exit','quit']:
-        break
+if __name__=="__main__":
     
-    user_message=HumanMessage(content=user_input)
-    config={'configurable':{'thread_id':thread_id}}
-    response=chat_bot.invoke({'messages':[HumanMessage(content=user_input )]},config=config)
-    print("Chatbot:",response['messages'][-1].content)
-
+    chat_bot=graph.compile(checkpointer=checkpointer)
+    initial_state={'messages':[]}
+    thread_id="chat_thread_1"
+    while True:
+        user_input=input("User: ")
+        if user_input.lower() in ['exit','quit']:
+            break
+        
+        user_message=HumanMessage(content=user_input)
+        config={'configurable':{'thread_id':thread_id}}
+        response=chat_bot.invoke({'messages':[HumanMessage(content=user_input )]},config=config)
+        print("Chatbot:",response['messages'][-1].content)
+    
+    
