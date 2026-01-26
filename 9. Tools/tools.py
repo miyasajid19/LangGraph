@@ -79,21 +79,25 @@ tool_node=ToolNode(tools=tools)
 # defining graph structure
 graph= StateGraph(ChatState)
 graph.add_node("chat_node", chat_node)
-graph.add_node("tool_node", tool_node, condition=tools_condition)
+graph.add_node("tools", tool_node)
 
 
 # defining edges
 graph.add_edge(START, "chat_node")
 graph.add_conditional_edges("chat_node", tools_condition)
-graph.add_edge("tool_node", "chat_node")
+graph.add_edge("tools", "chat_node")
 graph.add_edge("chat_node", END)
 
 
 
 workflow=graph.compile()
-
-
-
-print(workflow.invoke({
-    "messages": [HumanMessage(content="What is the conversion rate between USD and EUR?")]
-}))
+if __name__ == "__main__":
+    while True:
+        user_input = input("User: ")
+        initial_state: ChatState = {
+            "messages": [HumanMessage(content=user_input)]
+        }
+        result = workflow.invoke(initial_state)
+        for message in result['messages']:
+            print(f"Bot: {message.content}")
+        print("=" * 20)
