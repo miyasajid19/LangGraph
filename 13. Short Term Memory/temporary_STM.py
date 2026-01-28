@@ -56,9 +56,20 @@ config={
 if __name__ == "__main__":
     while True:
         user_input = input("User: ")
+        if user_input.lower() in ['exit', 'quit']:
+            break
         # Don't reset state - let it load from memory with thread_id
         result = workflow.invoke({"messages": [HumanMessage(content=user_input)]}, config=config)
         # Get the last message (bot's response)
         last_message = result["messages"][-1]
         print(f"Bot: {last_message.content}")
         print("=" * 20)
+    
+        # memory
+        print("Chat History:")
+        snap = workflow.get_state(config)
+        vals = snap.values
+        for m in vals.get("messages", []):
+                print("-", type(m).__name__, ":", m.content)
+                
+        print("==" * 20)
