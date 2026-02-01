@@ -105,14 +105,39 @@ def summarize_emails_tool(uid) -> str:
         """
         
         return raw_model.invoke(prompt)
+
+
+#-------------
+# Tool 3: Tavily Search Results
+#-------------
+TAVILY_API_KEY = os.getenv("tavily_api_key")
+@tool
+def tavily_search_tool(query: str) -> str:
+    """
+    Docstring for tavily_search_tool
     
-    
+    :param query: Description
+    :type query: str
+    :return: Description
+    :rtype: str
+    """
+    tavily_tool = TavilySearchResults(api_key=TAVILY_API_KEY, max_results=3)
+    result_list = tavily_tool.invoke(query)  # Returns LIST of dicts
+
+    formatted_results = ""
+    for r in result_list:
+        formatted_results += f"Title: {r['title']}\n"
+        formatted_results += f"Content: {r['content'][:200]}...\n"
+        formatted_results += f"URL: {r['url']}\n"
+        formatted_results += "-----\n"
+    return formatted_results 
+
 # -------------
 # Setting up the Language Model
 # -------------
 
 raw_model=ChatOllama(model=CHAT_OLLAMA_MODEL)
-model_with_tools=raw_model.bind_tools([fetch_latest_unread_emails_tool,summarize_emails_tool])
+model_with_tools=raw_model.bind_tools([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool])
 
 
 # -------------
@@ -127,7 +152,7 @@ def router_node(ChatState):
     last_message=ChatState["messages"][-1]
     return 'tools' if getattr(last_message,'tool_calls',None) else 'end'
 
-tool_node=ToolNode([fetch_latest_unread_emails_tool,summarize_emails_tool])
+tool_node=ToolNode([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool])
 
 builder=StateGraph(ChatState)
 
