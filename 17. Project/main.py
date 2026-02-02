@@ -2,6 +2,7 @@
 # importing liraries
 # -------------
 
+import keyword
 import os
 import json
 from pyexpat.errors import messages
@@ -61,7 +62,7 @@ def fetch_latest_unread_emails_tool() -> str:
     """
     print("Fetching latest unread emails...")
     with connect_mailbox() as mail_box:
-        messages=list(mail_box.fetch(AND(seen=False),limit=5,reverse=True))
+        messages=list(mail_box.fetch(AND(seen=False),limit=5,reverse=True,mark_seen=False))
         print(f"Fetched {len(messages)} unread emails.")
     
     if not messages:
@@ -91,26 +92,29 @@ def summarize_emails_tool(uid) -> str:
     """
     Docstring for summarize_emails_tool
     
-    :param messages: Description
-    :type messages: list[dict]
-    :return: Description
+    :param uid: Unique identifier of the email to summarize
+    :type uid: str
+    :return: Summary of the email
     :rtype: str
     """
     print(f"Summarizing {uid} emails...")
     with connect_mailbox() as mail_box:
-        mail=next(mail_box.fetch(AND(uid=uid),limit=1),None)
+        mail = next(mail_box.fetch(AND(uid=uid), limit=1), None)
         
         if not mail:
             return f"No email found with UID {uid}."
         
-        prompt=f"""
+        prompt = f"""
         Summarize the following email content in concise bullet points:
         Subject: {mail.subject}
         From: {mail.from_}
         Date: {mail.date}
-        Body: {mail.text or mail.html}
-        Note: Focus on key information and main points.
+        Body: {mail.text or mail.html}.
+        summarize individually each email in bullet points.
         """
+        
+        # Mark the email as seen only if summarizing
+        mail_box.mark_seen(mail.uid)
         
         return raw_model.invoke(prompt)
 
@@ -175,12 +179,236 @@ def send_email_tool(to_email: str, subject: str, body: str) -> str:
         return f"Email sent successfully to {to_email}."
     except Exception as e:
         return f"Failed to send email. Error: {str(e)}"
+    
+    
+    
+    
+#-------------
+# Tool 5 : get mails
+# -------------
+@tool
+def get_mails_tool() -> str:
+    """
+    Docstring for get_mails_tool
+    
+    :return: Description
+    :rtype: str
+    """
+    print("Getting mails...")
+    with connect_mailbox() as mail_box:
+        messages=list(mail_box.fetch(AND(seen=False),limit=5,reverse=True))
+        print(f"Fetched {len(messages)} unread emails.")
+    
+    if not messages:
+        return "No unread emails found."
+    
+    response=json.dumps(
+        [
+            {
+                "subject":msg.subject,
+                "from":msg.from_,
+                "date":str(msg.date),
+                "body":msg.text
+            }
+            for msg in messages
+        ],
+        indent=4
+    )
+    print("Formatted fetched emails as JSON.")
+    return response
+
+
+# ------------ 
+# Tool 6 : Search mail by keyword
+# -------------
+@tool
+def search_mail_tool(keyword: str) -> str:
+    """
+    Docstring for search_mail_tool
+    
+    :param keyword: Description
+    :type keyword: str
+    :return: Description
+    :rtype: str
+    """
+    print(f"Searching mails with keyword: {keyword}...")
+    with connect_mailbox() as mail_box:
+        messages=list(mail_box.fetch(AND(subject=keyword),limit=5,reverse=True,charset='UTF-8'))
+        print(f"Found {len(messages)} emails with keyword '{keyword}'.")
+    
+    if not messages:
+        return f"No emails found with keyword '{keyword}'."
+    
+    response=json.dumps(
+        [
+            {
+                "subject":msg.subject,
+                "from":msg.from_,
+                "date":str(msg.date),
+                "body":msg.text
+            }
+            for msg in messages
+        ],
+        indent=4
+    )
+    print("Formatted searched emails as JSON.")
+    return response
+
+
+
+# -------------
+# Tool 7 : mails recieved from
+# -------------
+@tool
+def mails_received_from_tool(sender_email: str) -> str:
+    """
+    Docstring for mails_received_from_tool
+    
+    :param sender_email: Description
+    :type sender_email: str
+    :return: Description
+    :rtype: str
+    """
+    print(f"Fetching mails from: {sender_email}...")
+    with connect_mailbox() as mail_box:
+        messages=list(mail_box.fetch(AND(from_=sender_email),limit=5,reverse=True))
+        print(f"Fetched {len(messages)} emails from {sender_email}.")
+    
+    if not messages:
+        return f"No emails found from {sender_email}."
+    
+    response=json.dumps(
+        [
+            {
+                "subject":msg.subject,
+                "from":msg.from_,
+                "date":str(msg.date),
+                "body":msg.text
+            }
+            for msg in messages
+        ],
+        indent=4
+    )
+    print("Formatted fetched emails as JSON.")
+    return response
+    
+
+# -------------
+# Tool 8 : Auto reply to email 
+# -------------
+@tool
+def auto_reply_tool(uid,reply_body) -> str:
+    """
+    Docstring for auto_reply_tool
+    
+    :param uid: Unique identifier of the email to reply to
+    :type uid: str
+    :param reply_body: Body of the reply email
+    :type reply_body: str
+    :return: Status of the reply action
+    :rtype: str
+    """
+    print(f"Auto replying to email UID {uid}...")
+    with connect_mailbox() as mail_box:
+        mail = next(mail_box.fetch(AND(uid=uid), limit=1), None)
+        
+        if not mail:
+            return f"No email found with UID {uid}."
+        
+        to_email = mail.from_
+        subject = f"Re: {mail.subject}"
+        
+        # Send the reply using the send_email_tool
+        send_status = send_email_tool(to_email, subject, reply_body)
+        
+        return send_status
+    
+
+# -------------
+# Tool 9 : Delete email by UID
+# -------------
+@tool
+def delete_email_tool(uid) -> str:
+    """
+    Docstring for delete_email_tool
+    
+    :param uid: Unique identifier of the email to delete
+    :type uid: str
+    :return: Status of the delete action
+    :rtype: str
+    """
+    print(f"Deleting email UID {uid}...")
+    with connect_mailbox() as mail_box:
+        mail = next(mail_box.fetch(AND(uid=uid), limit=1), None)
+        
+        if not mail:
+            return f"No email found with UID {uid}."
+        
+        mail_box.delete(mail.uid)
+        
+        return f"Email with UID {uid} has been deleted."
+    
+
+# -------------
+# Tool 10 : Mark email as read by UID
+# -------------
+@tool
+def mark_email_as_read_tool(uid) -> str:
+    """
+    Docstring for mark_email_as_read_tool
+    
+    :param uid: Unique identifier of the email to mark as read
+    :type uid: str
+    :return: Status of the action
+    :rtype: str
+    """
+    print(f"Marking email UID {uid} as read...")
+    with connect_mailbox() as mail_box:
+        mail = next(mail_box.fetch(AND(uid=uid), limit=1), None)
+        
+        if not mail:
+            return f"No email found with UID {uid}."
+        
+        mail_box.mark_seen(mail.uid)
+        
+        return f"Email with UID {uid} has been marked as read."
+
+
+# -------------
+# Tool 11 : Mark email as unread by UID
+# -------------
+@tool
+def mark_email_as_unread_tool(uid) -> str:
+    """
+    Docstring for mark_email_as_unread_tool
+    
+    :param uid: Unique identifier of the email to mark as unread
+    :type uid: str
+    :return: Status of the action
+    :rtype: str
+    """
+    print(f"Marking email UID {uid} as unread...")
+    with connect_mailbox() as mail_box:
+        mail = next(mail_box.fetch(AND(uid=uid), limit=1), None)
+        
+        if not mail:
+            return f"No email found with UID {uid}."
+        
+        mail_box.mark_unseen(mail.uid)
+        
+        return f"Email with UID {uid} has been marked as unread."
+    
+    
+
+
+
+
 # -------------
 # Setting up the Language Model
 # -------------
 
 raw_model=ChatOllama(model=CHAT_OLLAMA_MODEL)
-model_with_tools=raw_model.bind_tools([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool,send_email_tool])
+model_with_tools=raw_model.bind_tools([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool,send_email_tool,get_mails_tool,search_mail_tool,mails_received_from_tool,auto_reply_tool,delete_email_tool,mark_email_as_read_tool,mark_email_as_unread_tool])
 
 
 # -------------
@@ -195,7 +423,7 @@ def router_node(ChatState):
     last_message=ChatState["messages"][-1]
     return 'tools' if getattr(last_message,'tool_calls',None) else 'end'
 
-tool_node=ToolNode([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool,send_email_tool])
+tool_node=ToolNode([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool,send_email_tool,get_mails_tool,search_mail_tool,mails_received_from_tool,auto_reply_tool,delete_email_tool,mark_email_as_read_tool,mark_email_as_unread_tool])
 
 builder=StateGraph(ChatState)
 
