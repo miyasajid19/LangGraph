@@ -14,7 +14,8 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
 from langgraph.graph import StateGraph,START,END
 from operator import add
-
+import smtplib
+from email.message import EmailMessage
 # -------------
 # loading environment variables
 # -------------
@@ -26,6 +27,11 @@ IMAP_PORT=int(os.getenv("IMAP_PORT"))
 EMAIL=os.getenv("EMAIL")
 APP_PASSWORD=os.getenv("APP_PASSWORD")
 IMAP_FOLDER="INBOX"
+
+
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+
 
 CHAT_OLLAMA_MODEL="gpt-oss:120b-cloud"
 
@@ -53,6 +59,7 @@ def fetch_latest_unread_emails_tool() -> str:
     :return: Description
     :rtype: str
     """
+    print("Fetching latest unread emails...")
     with connect_mailbox() as mail_box:
         messages=list(mail_box.fetch(AND(seen=False),limit=5,reverse=True))
         print(f"Fetched {len(messages)} unread emails.")
@@ -72,6 +79,7 @@ def fetch_latest_unread_emails_tool() -> str:
         ],
         indent=4
     )
+    print("Formatted fetched emails as JSON.")
     return response
 
 
@@ -121,6 +129,7 @@ def tavily_search_tool(query: str) -> str:
     :return: Description
     :rtype: str
     """
+    print("Performing Tavily search...")
     tavily_tool = TavilySearchResults(api_key=TAVILY_API_KEY, max_results=3)
     result_list = tavily_tool.invoke(query)  # Returns LIST of dicts
 
@@ -130,14 +139,48 @@ def tavily_search_tool(query: str) -> str:
         formatted_results += f"Content: {r['content'][:200]}...\n"
         formatted_results += f"URL: {r['url']}\n"
         formatted_results += "-----\n"
+    print("Tavily search completed.")
     return formatted_results 
 
+
+# -------------
+# Tool 4 : Mail Sender (imported from mail_sender.py)
+# -------------
+@tool
+def send_email_tool(to_email: str, subject: str, body: str) -> str:
+    """
+    Docstring for send_email_tool
+    
+    :param to_email: Description
+    :type to_email: str
+    :param subject: Description
+    :type subject: str
+    :param body: Description
+    :type body: str
+    :return: Description
+    :rtype: str
+    """
+    print(f"Sending email to {to_email}...")
+    message=EmailMessage()
+    message["From"]=EMAIL
+    message["To"]=to_email
+    message["Subject"]=subject
+    message.set_content(body)
+    try:
+        with smtplib.SMTP(SMTP_SERVER,SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL,APP_PASSWORD)
+            server.send_message(message)
+        print(f"Email sent successfully to {to_email}.")
+        return f"Email sent successfully to {to_email}."
+    except Exception as e:
+        return f"Failed to send email. Error: {str(e)}"
 # -------------
 # Setting up the Language Model
 # -------------
 
 raw_model=ChatOllama(model=CHAT_OLLAMA_MODEL)
-model_with_tools=raw_model.bind_tools([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool])
+model_with_tools=raw_model.bind_tools([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool,send_email_tool])
 
 
 # -------------
@@ -152,7 +195,7 @@ def router_node(ChatState):
     last_message=ChatState["messages"][-1]
     return 'tools' if getattr(last_message,'tool_calls',None) else 'end'
 
-tool_node=ToolNode([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool])
+tool_node=ToolNode([fetch_latest_unread_emails_tool,summarize_emails_tool,tavily_search_tool,send_email_tool])
 
 builder=StateGraph(ChatState)
 
