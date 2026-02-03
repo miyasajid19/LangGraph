@@ -9,6 +9,7 @@ from pyexpat.errors import messages
 from dotenv import load_dotenv
 from typing import TypedDict, List
 from imap_tools import MailBox, AND
+from imap_tools.consts import MailMessageFlags
 from langchain_ollama import ChatOllama
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.tools import tool
@@ -120,7 +121,7 @@ def summarize_emails_tool(uid) -> str:
         """
         
         # Mark the email as seen only if summarizing
-        mail_box.mark_seen(mail.uid)
+        mail_box.flag(mail.uid, MailMessageFlags.SEEN, True)
         
         return raw_model.invoke(prompt)
 
@@ -447,7 +448,7 @@ def mark_email_as_read_tool(uid) -> str:
         if not mail:
             return f"No email found with UID {uid}."
         
-        mail_box.mark_seen(mail.uid)
+        mail_box.flag(mail.uid, MailMessageFlags.SEEN, True)
         
         return f"Email with UID {uid} has been marked as read."
 
@@ -472,7 +473,7 @@ def mark_email_as_unread_tool(uid) -> str:
         if not mail:
             return f"No email found with UID {uid}."
         
-        mail_box.mark_unseen(mail.uid)
+        mail_box.flag(mail.uid, MailMessageFlags.SEEN, False)
         
         return f"Email with UID {uid} has been marked as unread."
     
