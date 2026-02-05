@@ -1,5 +1,5 @@
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter,Language
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings,ChatOllama
 from dotenv import load_dotenv
@@ -32,20 +32,61 @@ def load_pdf(file_path):
     return documents
 
 
+def load_all(file_path):
+    loader=DirectoryLoader(
+        path=file_path,
+        glob="**/*.*",  # Recursive pattern to search all subfolders
+        recursive=True,
+        silent_errors=True,  # Skip files that can't be loaded
+        show_progress=True   # Show progress bar
+    )
+    documents = loader.load()
+    return documents
 
 # ------------
 # splitting documents into chunks
 # ------------
 def split_docs(documents):
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        separators=["\n\n", "\n", " ", ""]
-    )
-    chunks = text_splitter.split_documents(documents)
+    chunks = []
+    
+    for doc in documents:
+        print(f"Processing document: {doc.metadata['source']}")
+        ext = os.path.splitext(doc.metadata['source'])[1].lower()
+        
+        # Determine splitter based on file type
+        if ext == '.py':
+            print("Using Python text splitter")
+            text_splitter = RecursiveCharacterTextSplitter.from_language(
+                language=Language.PYTHON,
+                chunk_size=500,
+                chunk_overlap=100,
+            )
+        elif ext in ['.cpp', '.h']:
+            print("Using C++ text splitter")
+            text_splitter = RecursiveCharacterTextSplitter.from_language(
+                language=Language.CPP,
+                chunk_size=500,
+                chunk_overlap=100,
+            )
+        elif ext == '.ipynb':
+            print("Using Jupyter text splitter")
+            text_splitter = RecursiveCharacterTextSplitter.from_language(
+                language=Language.JUPYTER,
+                chunk_size=500,
+                chunk_overlap=100,
+            )
+        else:  # PDF and others
+            print("Using default text splitter")
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+            )
+        
+        # Split and accumulate chunks
+        chunks.extend(text_splitter.split_documents([doc]))
+    
     return chunks
-
-
+        
 
 # ------------
 # creating embedder
@@ -61,8 +102,9 @@ def get_embeddings():
 # creating vector store
 # ------------
 def create_vector_store(chunks, embeddings):
+    if not chunks:
+        raise ValueError("No documents found to create vector store. Please check your data path and file types.")
     
-    embeddings=get_embeddings()
     db=FAISS.from_documents(chunks, embeddings)
     db.save_local(DB_FAISS_PATH)
     
@@ -104,7 +146,12 @@ def get_vector_store():
     # if not exist create it 
     if not os.path.exists(DB_FAISS_PATH):
         print("Creating vector store...")
-        chunks = split_docs(load_pdf(DATA_PATH))
+        documents = load_all(DATA_PATH)
+        if not documents:
+            raise ValueError(f"No documents found in {DATA_PATH}. Please check the path.")
+        print(f"Loaded {len(documents)} documents")
+        chunks = split_docs(documents)
+        print(f"Created {len(chunks)} chunks")
         create_vector_store(chunks, get_embeddings())
         print("Vector store created and saved.")
     
