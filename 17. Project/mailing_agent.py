@@ -18,6 +18,18 @@ from langgraph.graph import StateGraph,START,END
 from operator import add
 import smtplib
 from email.message import EmailMessage
+import re
+import string
+from nltk.stem import PorterStemmer
+import joblib
+import json
+import pymysql
+import dotenv
+from urllib.parse import urlparse
+import cloudinary
+import cloudinary.uploader
+import time
+import threading
 # -------------
 # loading environment variables
 # -------------
@@ -35,8 +47,47 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 
 
-# CHAT_OLLAMA_MODEL="gpt-oss:120b-cloud"
-CHAT_OLLAMA_MODEL="deepseek-v3.1:671b-cloud"
+CHAT_OLLAMA_MODEL="gpt-oss:120b-cloud"
+
+DATABASE=os.getenv("DATABASE")
+HOST=os.getenv("HOST")
+PASSWORD=os.getenv("PASSWORD")
+TIMEOUT=os.getenv("TIMEOUT")
+DB_PORT=os.getenv("DB_PORT")
+USER=os.getenv("USER")
+CLOUD_NAME=os.getenv("CLOUD_NAME")
+API_KEY=os.getenv("API_KEY")
+API_SECRET=os.getenv("API_SECRET")
+
+
+
+
+def get_database_connection():
+    timeout = int(os.getenv("TIMEOUT", 10))
+    connection = pymysql.connect(
+    charset="utf8mb4",
+    connect_timeout=timeout,
+    cursorclass=pymysql.cursors.DictCursor,
+    database=os.getenv("DATABASE", "defaultdb"),
+    host=os.getenv("HOST", "localhost"),
+    password=os.getenv("PASSWORD", ""),
+    read_timeout=timeout,
+    port=int(os.getenv("DB_PORT", os.getenv("MYSQL_PORT", 3306))),
+    user=os.getenv("USER", "root"),
+    write_timeout=timeout,
+    )
+    return connection
+
+
+
+def get_cloudinary_configuratin():
+    return cloudinary.config(
+        cloud_name=os.getenv("CLOUD_NAME"),
+        api_key=os.getenv("API_KEY"),
+        api_secret=os.getenv("API_SECRET"),
+        secure=True
+    )
+
 
 class ChatState(TypedDict):
     messages: list[str,add]
@@ -268,7 +319,7 @@ def mails_received_from_tool(sender_email: str) -> str:
 
 
 # -------------
-# Tool 13 : List recent emails (optionally including read)
+# Tool 8 : List recent emails (optionally including read)
 # -------------
 @tool
 def list_recent_emails_tool(include_seen: bool = True, limit: int = 5) -> str:
@@ -299,7 +350,7 @@ def list_recent_emails_tool(include_seen: bool = True, limit: int = 5) -> str:
 
 
 # -------------
-# Tool 14 : Reply to latest email (auto-fetch + reply)
+# Tool 9 : Reply to latest email (auto-fetch + reply)
 # -------------
 @tool
 def reply_to_latest_email_tool(reply_body: str, include_seen: bool = False) -> str:
@@ -333,7 +384,7 @@ def reply_to_latest_email_tool(reply_body: str, include_seen: bool = False) -> s
 
 
 # -------------
-# Tool 15 : Delete multiple emails by UID
+# Tool 10 : Delete multiple emails by UID
 # -------------
 @tool
 def delete_emails_tool(uids: List[str]) -> str:
@@ -371,7 +422,7 @@ def delete_emails_tool(uids: List[str]) -> str:
     
 
 # -------------
-# Tool 8 : Auto reply to email 
+# Tool 11 : Auto reply to email 
 # -------------
 @tool
 def auto_reply_tool(uid,reply_body) -> str:
@@ -404,7 +455,7 @@ def auto_reply_tool(uid,reply_body) -> str:
     
 
 # -------------
-# Tool 9 : Delete email by UID
+# Tool 12 : Delete email by UID
 # -------------
 @tool
 def delete_email_tool(uid) -> str:
@@ -429,7 +480,7 @@ def delete_email_tool(uid) -> str:
     
 
 # -------------
-# Tool 10 : Mark email as read by UID
+# Tool 13 : Mark email as read by UID
 # -------------
 @tool
 def mark_email_as_read_tool(uid) -> str:
@@ -454,7 +505,7 @@ def mark_email_as_read_tool(uid) -> str:
 
 
 # -------------
-# Tool 11 : Mark email as unread by UID
+# Tool 14 : Mark email as unread by UID
 # -------------
 @tool
 def mark_email_as_unread_tool(uid) -> str:
@@ -479,7 +530,7 @@ def mark_email_as_unread_tool(uid) -> str:
     
     
 # -------------
-# Tool 12: Take Note
+# Tool 15: Take Note
 # -------------
 @tool
 def take_note_tool(note: str) -> str:
@@ -558,7 +609,123 @@ def send_email_with_attachments_tool(to_email: str, subject: str, body: str, att
     except Exception as e:
         return f"Failed to send email. Error: {str(e)}"
 
+# -------------
+# Tool 17: fetch messages from database
+# -------------
+@tool
+def fetch_messages_from_db_tool() -> str:
+    """
+    Docstring for fetch_messages_from_db_tool
+    
+    :return: Description
+    :rtype: str
+    """
+    print("Fetching messages from database...")
+    try:
+        connection = get_database_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, name, email, message, created_at FROM contacts WHERE replied=FALSE ORDER BY created_at DESC LIMIT 10")
+            messages = cursor.fetchall()
+        connection.close()
+        print(f"Fetched {len(messages)} messages from database.")
+        for msg in messages:
+            print(f"ID: {msg['id']}, Name: {msg['name']}, Email: {msg['email']}, Message: {msg['message']}, Created At: {msg['created_at']}")
+            print("-----"*10)
+        # Convert datetime objects to strings for JSON serialization
+        for msg in messages:
+            if 'created_at' in msg and msg['created_at']:
+                msg['created_at'] = str(msg['created_at'])
+        return json.dumps(messages, indent=4, default=str)
+    except Exception as e:
+        print(f"Error fetching messages from database: {str(e)}")
+        return f"Failed to fetch messages from database. Error: {str(e)}"
+    
+    
 
+# -------------
+# Tool 18: Getting email details by UID from database
+# -------------
+@tool
+def get_email_details_from_db_tool(uid) -> str:
+    """
+    This tool fetches email details from the database based on the provided UID. It retrieves information such as the sender's name, email address, message content, and creation date for the specified email entry in the database. The results are returned in a JSON format for easy consumption by other components of the system. 
+    """
+    print(f"Fetching email details for UID: {uid}")
+    try:
+        connection = get_database_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, name, email, message, created_at FROM contacts WHERE id=%s", (uid,))
+            email_details = cursor.fetchone()
+        connection.close()
+        
+        if not email_details:
+            print(f"No email found in database with UID: {uid}")
+            return f"No email found in database with UID: {uid}"
+        
+        # Convert datetime object to string for JSON serialization
+        if 'created_at' in email_details and email_details['created_at']:
+            email_details['created_at'] = str(email_details['created_at'])
+        
+        print(f"Fetched email details for UID {uid}: {email_details}")
+        return json.dumps(email_details, indent=4, default=str)
+    except Exception as e:
+        print(f"Error fetching email details from database for UID {uid}: {str(e)}")
+        return f"Failed to fetch email details from database for UID {uid}. Error: {str(e)}"
+    
+# -------------
+# Tool 19: Reply to email by UID from database
+# -------------
+#  CREATE TABLE IF NOT EXISTS contacts (
+#             id INT AUTO_INCREMENT PRIMARY KEY,
+#             name VARCHAR(100) NOT NULL,
+#             email VARCHAR(100) NOT NULL,
+#             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+#             message TEXT NOT NULL,
+#             replied BOOLEAN DEFAULT FALSE,
+#             reply TEXT DEFAULT NULL,
+#             replied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+#             attachments JSON DEFAULT NULL
+#         );
+@tool
+def reply_to_email_from_db_tool(uid, reply_body) -> str:
+    """
+    This tool allows you to reply to an email entry in the database based on its UID. It retrieves the email details from the database using the provided UID, extracts the sender's email address, and sends a reply email with the specified body content. The tool returns a status message indicating whether the reply was sent successfully or if there were any issues during the process.
+    """
+    print(f"Replying to email from database with UID: {uid}")
+    try:
+        connection = get_database_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, name, email, message, created_at FROM contacts WHERE id=%s", (uid,))
+            email_entry = cursor.fetchone()
+        
+        if not email_entry:
+            connection.close()
+            print(f"No email found in database with UID: {uid}")
+            return f"No email found in database with UID: {uid}"
+        
+        to_email = email_entry['email']
+        subject = f"Re: Your message received on {email_entry['created_at']}"
+        
+        send_status = send_email_tool.invoke(
+            {"to_email": to_email, "subject": subject, "body": reply_body}
+        )
+        import datetime
+        replied_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"Reply sent at {replied_at} with content: {reply_body}", end="\n"*4)
+        print(f"Reply status for UID {uid}: {send_status}")
+        print(f"Updating database to mark email with UID {uid} as replied...")
+        
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE contacts SET replied=TRUE, reply=%s, replied_at=%s WHERE id=%s", (reply_body, replied_at, uid))
+            connection.commit()
+        
+        connection.close()
+        print(f"Database updated successfully for UID {uid}.")
+        return send_status
+    except Exception as e:
+        print(f"Error replying to email from database for UID {uid}: {str(e)}", end="\n"*4)
+        return f"Failed to reply to email from database for UID {uid}. Error: {str(e)}"
+    
 # -------------
 # Setting up the Language Model
 # -------------
@@ -581,6 +748,9 @@ model_with_tools=raw_model.bind_tools([
     reply_to_latest_email_tool,
     delete_emails_tool,
     send_email_with_attachments_tool,
+    fetch_messages_from_db_tool,
+    get_email_details_from_db_tool,
+    reply_to_email_from_db_tool
 ])
 
 
@@ -613,6 +783,9 @@ tool_node=ToolNode([
     reply_to_latest_email_tool,
     delete_emails_tool,
     send_email_with_attachments_tool,
+    fetch_messages_from_db_tool,
+    get_email_details_from_db_tool,
+    reply_to_email_from_db_tool
 ])
 
 builder=StateGraph(ChatState)
