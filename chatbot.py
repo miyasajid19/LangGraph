@@ -17,6 +17,22 @@ from langgraph.store.postgres import PostgresStore
 from psycopg_pool import ConnectionPool
 
 console = Console()
+
+def message_chunk_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(item.get("text") or item.get("content") or "")
+        return "".join(parts)
+
+    return str(content) if content else ""
+
 def load_history(thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -247,11 +263,24 @@ def run_chatbot():
 
             inputs = {"messages": [HumanMessage(content=user_input)]}
             
-            with console.status("[dim cyan]Processing match & running extraction nodes...[/dim cyan]"):
-                updated_state = app.invoke(inputs, config=config)
+            console.print("[bold blue]AI:[/bold blue] ", end="")
+            for message_chunk, metadata in app.stream(
+                inputs,
+                config=config,
+                stream_mode="messages",
+            ):
+                if metadata.get("langgraph_node") != "conversation_agent":
+                    continue
 
-            console.print(f"[bold blue]AI:[/bold blue] {updated_state['response']}")
-            
+                chunk_text = message_chunk_to_text(message_chunk.content)
+                if chunk_text:
+                    console.print(chunk_text, end="", markup=False, highlight=False)
+
+            console.print()
+
+            snapshot = app.get_state(config)
+            updated_state = snapshot.values if snapshot else {}
+
             if updated_state.get("extracted_memories"):
                 console.print(f"[dim italic yellow]💡 System logged new memory: {updated_state['extracted_memories']}[/dim italic yellow]")
                 
