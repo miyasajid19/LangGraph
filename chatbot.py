@@ -17,6 +17,31 @@ from langgraph.store.postgres import PostgresStore
 from psycopg_pool import ConnectionPool
 
 console = Console()
+def load_history(thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        # Get latest state snapshot
+        snapshot = app.get_state(config)
+
+        if not snapshot:
+            console.print("[yellow]No history found for this thread.[/yellow]")
+            return
+
+        messages = snapshot.values.get("messages", [])
+
+        console.print("\n[bold cyan]=== Conversation History ===[/bold cyan]\n")
+
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                console.print(f"[bold green]You:[/bold green] {msg.content}")
+            elif isinstance(msg, AIMessage):
+                console.print(f"[bold blue]AI:[/bold blue] {msg.content}")
+
+        console.print("\n[bold cyan]===========================[/bold cyan]\n")
+
+    except Exception as e:
+        console.print(f"[red]Failed to load history:[/red] {e}")
 
 # Connection String Config
 URI = "postgresql://postgres:postgres@localhost:5442/postgres?sslmode=disable"
@@ -199,6 +224,7 @@ def run_chatbot():
         thread_id = str(uuid7())
     else:
         thread_id = input("Enter thread ID: ").strip()
+        load_history(thread_id)
         
     config = {"configurable": {"thread_id": thread_id}}
     print(f"Active Session Config: {config}")
@@ -214,7 +240,7 @@ def run_chatbot():
             
             if user_input.lower() in ["exit", "quit"]:
                 console.print("[bold yellow]Goodbye![/bold yellow]")
-                sys.exit(0)
+                break
                 
             if not user_input:
                 continue
@@ -222,27 +248,16 @@ def run_chatbot():
             inputs = {"messages": [HumanMessage(content=user_input)]}
             
             with console.status("[dim cyan]Processing match & running extraction nodes...[/dim cyan]"):
-                # 1. Initialize the message stream generator
-                stream_generator = app.stream(inputs, config=config, stream_mode="messages")
-                
-                console.print("[bold blue]AI:[/bold blue] ", end="")
-                for message, metadata in stream_generator:
-                    if isinstance(message, AIMessage) and message.content:
-                        print(message.content, end="", flush=True)
-                print()  # Final newline after streaming finishes
+                updated_state = app.invoke(inputs, config=config)
 
-            # 2. Get the final compiled state dictionary to safely read extracted memories
-            final_state = app.get_state(config)
-            extracted_memories = final_state.values.get("extracted_memories", [])
+            console.print(f"[bold blue]AI:[/bold blue] {updated_state['response']}")
             
-            # 3. Print the new logged memories safely if any exist
-            if extracted_memories:
-                console.print(f"[dim italic yellow]💡 System logged new memory: {extracted_memories}[/dim italic yellow]")
+            if updated_state.get("extracted_memories"):
+                console.print(f"[dim italic yellow]💡 System logged new memory: {updated_state['extracted_memories']}[/dim italic yellow]")
                 
         except KeyboardInterrupt:
             console.print("\n[bold yellow]Session interrupted. Goodbye![/bold yellow]")
             sys.exit(0)
-
 
 if __name__ == "__main__":
     run_chatbot()
